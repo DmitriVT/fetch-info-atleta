@@ -115,7 +115,7 @@ async function main() {
       writeApi.useDefaultTags({ host: process.env.DOCKER_INFLUXDB_INIT_HOST });
       console.log("Connected to InfluxDB");
 
-      setInterval(() => fetchDataAndWrite(api, writeApi), 60000);
+      setInterval(() => fetchDataAndWrite(api, writeApi), 600000);
       break;
     } catch (error) {
       console.error('Error connecting:', error);

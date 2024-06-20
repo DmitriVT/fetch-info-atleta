@@ -1,5 +1,7 @@
 import { ApiPromise, WsProvider } from '@polkadot/api';
 import { InfluxDB, Point } from '@influxdata/influxdb-client';
+import pg from 'pg'
+const { Pool, Client } = pg
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -11,10 +13,48 @@ const influxToken = process.env.DOCKER_INFLUXDB_INIT_ADMIN_TOKEN;
 const influxOrg = process.env.DOCKER_INFLUXDB_INIT_ORG;
 const influxBucket = process.env.DOCKER_INFLUXDB_INIT_BUCKET;
 
+const pgHost = process.env.PG_HOST;
+const pgPort = process.env.PG_PORT;
+const pgUser = process.env.PG_USER;
+const pgPassword = process.env.PG_PASSWORD;
+const pgDatabase = process.env.PG_DATABASE;
+
+
 async function connect() {
   const wsProvider = new WsProvider(endpoint);
   const api = await ApiPromise.create({ provider: wsProvider });
   return api;
+}
+
+async function connectToPostgres() {
+  const client = new Client({
+    host: pgHost,
+    port: pgPort,
+    user: pgUser,
+    password: pgPassword,
+    database: pgDatabase,
+  });
+  await client.connect();
+  return client;
+}
+
+async function getActiveAccountCount(pgClient) {
+  const res = await pgClient.query(`
+    SELECT COUNT(*) AS count
+    FROM account
+    WHERE last_tx > NOW() - INTERVAL '3 days'
+  `);
+  return parseInt(res.rows[0].count, 10);
+}
+
+async function getTransactionInfoCount(pgClient) {
+  const res = await pgClient.query(`
+    SELECT *
+    FROM transactions_info
+    WHERE id = 'txs_info';
+  `);
+  console.log(res);
+  return parseInt(res.rows[0].amount, 10);
 }
 
 async function getWalletCount(api) {
@@ -73,7 +113,7 @@ function formatBigIntToFloat(bigint, decimals = 2) {
   return parseFloat(`${integerPart}.${fractionalPart}`);
 }
 
-async function fetchDataAndWrite(api, writeApi) {
+async function fetchDataAndWrite(api, writeApi, pgClient) {
   try {
     const walletCount = await getWalletCount(api);
     const totalSupplyOnHands = await getTotalSupplyOnHands(api);
@@ -81,12 +121,17 @@ async function fetchDataAndWrite(api, writeApi) {
     const proposalCount = await getProposalCount(api);
     const governanceWalletCount = await getGovernanceWalletCount(api);
 
+    const activeAccountCount = await getActiveAccountCount(pgClient);
+    const transactionInfoCount = await getTransactionInfoCount(pgClient);
+
     const points = [
       new Point('walletCount').intField('value', walletCount),
       new Point('totalSupplyOnHands').floatField('value', formatBigIntToFloat(totalSupplyOnHands)),
       new Point('totalStaked').floatField('value', formatBigIntToFloat(totalStaked)),
       new Point('proposalCount').intField('value', proposalCount),
       new Point('governanceWalletCount').intField('value', governanceWalletCount),
+      new Point('accountCount').intField('value', activeAccountCount),
+      new Point('transactionInfoCount').intField('value', transactionInfoCount),
     ];
 
     writeApi.writePoints(points);
@@ -102,6 +147,7 @@ async function main() {
   let api;
   let client;
   let writeApi;
+  let pgClient;
 
   while (true) {
     try {
@@ -115,7 +161,11 @@ async function main() {
       writeApi.useDefaultTags({ host: process.env.DOCKER_INFLUXDB_INIT_HOST });
       console.log("Connected to InfluxDB");
 
-      setInterval(() => fetchDataAndWrite(api, writeApi), 600000);
+      console.log("Connecting to PostgreSQL...");
+      pgClient = await connectToPostgres();
+      console.log("Connected to PostgreSQL");
+
+      setInterval(() => fetchDataAndWrite(api, writeApi, pgClient), 600000);
       break;
     } catch (error) {
       console.error('Error connecting:', error);

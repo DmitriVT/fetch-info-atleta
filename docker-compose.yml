@@ -11,6 +11,8 @@ services:
     entrypoint: [ "./entrypoint.sh" ]
     ports:
       - ${DOCKER_INFLUXDB_INIT_PORT}:${DOCKER_INFLUXDB_INIT_PORT}
+    networks:
+      - atleta-network
 
   grafana:
     image: grafana/grafana-oss:8.4.3
@@ -20,6 +22,8 @@ services:
       - influxdb
     ports:
       - ${GRAFANA_PORT}:3000
+    networks:
+      - atleta-network
 
   app:
     build: .
@@ -27,7 +31,13 @@ services:
       - influxdb
     env_file:
       - .env
+    networks:
+      - atleta-network
 
 volumes:
   influxdb-storage:
   grafana-storage:
+
+networks:
+  atleta-network:
+    name: atleta_network
